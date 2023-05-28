@@ -1,4 +1,9 @@
-from fastapi import FastAPI, Body, HTTPException
+from fastapi import (
+    FastAPI,
+    Body,
+    HTTPException,
+    Response
+)
 from database.connection import Session
 from pydantic import EmailStr
 from utils import (
@@ -9,8 +14,11 @@ from utils import (
     verify_token
 )
 from models.user import User
+from sqlalchemy import select, and_
 
 app = FastAPI()
+
+COOKIE_NAME = 'Authorization'
 
 @app.post("/signup/")
 def signup(
@@ -42,3 +50,31 @@ def verify(token: str):
         return {'message': 'success'}
     else:
         raise HTTPException(status_code=402, detail='verify token failed')
+
+@app.post("/signin/")
+def signin(
+    response: Response,
+    username: str = Body(),
+    email: EmailStr = Body(),
+    password: str = Body(),
+):
+    # check if username, email exist
+    with Session() as session:
+        query = (
+            select(User).where(
+                and_(User.username==username, User.email==email)
+            )
+        )
+        result_user = session.execute(query).scalar()
+        if not result_user:
+            raise HTTPException(status_code=403, detail='user not found')
+        if not result_user.is_active:
+            raise HTTPException(status_code=403, detail='user not verified')
+    hashed_password = result_user.hashed_password
+
+    if verify_password(plain_password=password, hashed_password=hashed_password):
+        token = create_access_token({'username': username, 'email': email})
+        response.set_cookie(key=COOKIE_NAME, value=token)
+        return {COOKIE_NAME: token}
+    else:
+        raise HTTPException(status_code=406, detail='wrong password')
